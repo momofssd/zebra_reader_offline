@@ -897,7 +897,9 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
       ctx.font = h * 1.08 + 'px ' + SCALABLE_FAMILY;
       const natural = ctx.measureText(SAMPLE).width / SAMPLE.length;
       // Zebra's scalable fonts use a much wider space than Arial does.
-      return { css: ctx.font, sx: (0.57 * w) / natural, cellH: h, ascent: Math.round(h * 0.78), space: 0.5 * w };
+      // Font N prints noticeably heavier than plain Arial; thicken its strokes.
+      const stroke = font.name === 'N' ? 0.07 * h : 0;
+      return { css: ctx.font, sx: (0.57 * w) / natural, cellH: h, ascent: Math.round(h * 0.78), space: 0.5 * w, stroke };
     }
     // Sizes fitted to the printer's output: cap height ~0.76 h, glyph widths proportional to w.
     ctx.font = 'bold ' + h * 1.07 + 'px ' + FONT0_FAMILY;
@@ -944,7 +946,9 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
         const d = fs.dash;
         ctx.fillRect(x + (d.adv - d.len) / 2, -d.y - d.th / 2, d.len, d.th);
       } else if (part && part !== ' ') {
-        ctx.save(); ctx.translate(x, 0); ctx.scale(fs.sx, 1); ctx.fillText(part, 0, 0); ctx.restore();
+        ctx.save(); ctx.translate(x, 0); ctx.scale(fs.sx, 1); ctx.fillText(part, 0, 0);
+        if (fs.stroke) { ctx.lineWidth = fs.stroke; ctx.lineJoin = 'round'; ctx.strokeText(part, 0, 0); }
+        ctx.restore();
       }
       x += partWidth(ctx, part, fs);
     }
@@ -1018,7 +1022,7 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
     let x = 0;
     widths.forEach((wd, k) => { if (k % 2 === 0) ctx.fillRect(x, 0, wd, h); x += wd; });
     if (c.hr && enc.text) {
-      ctx.font = tsize + 'px ' + MONO_FAMILY; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
+      ctx.font = 'bold ' + tsize + 'px ' + MONO_FAMILY; ctx.lineWidth = Math.max(1, tsize * 0.05); ctx.lineJoin = 'round'; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
       const ty = c.above ? -gap - Math.round(tsize * 0.2) : h + gap + Math.round(tsize * 0.8);
       const chars = [...enc.text];
       let x0, step;
@@ -1027,7 +1031,7 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
       } else {
         step = Math.min(tsize * 0.62, W / chars.length); x0 = (W - step * chars.length) / 2;
       }
-      chars.forEach((ch, k) => ctx.fillText(ch, x0 + (k + 0.5) * step, ty));
+      chars.forEach((ch, k) => { ctx.fillText(ch, x0 + (k + 0.5) * step, ty); ctx.strokeText(ch, x0 + (k + 0.5) * step, ty); });
     }
   }
 
