@@ -96,10 +96,10 @@
     <section>
       <h2>Files</h2>
       <div class="drop" id="drop" tabindex="0" role="button">
-        <strong>Add files</strong>
-        PDF, .zpl, .txt or .prn — choose several at once, or drop them here
+        <strong>Add a file</strong>
+        PDF, .zpl, .txt or .prn — one at a time; a new file replaces the current one
       </div>
-      <input type="file" id="file" accept=".pdf,.zpl,.txt,.prn,.lbl,application/pdf,text/plain" multiple hidden>
+      <input type="file" id="file" accept=".pdf,.zpl,.txt,.prn,.lbl,application/pdf,text/plain" hidden>
       <ul class="files" id="files"></ul>
       <div class="row" style="margin-top:10px; display:flex; gap:8px">
         <button class="btn sm" id="clearAll" type="button" hidden>Remove all</button>
@@ -123,13 +123,13 @@
         </select>
         <label class="k" for="sizeMode">Label size</label>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
-          <select id="sizeMode"><option value="zpl">From ^PW / ^LL</option><option value="custom">Custom</option></select>
+          <select id="sizeMode"><option value="zpl" selected>From ^PW / ^LL</option><option value="custom">Custom</option></select>
           <span id="customSize" hidden><input type="number" id="wIn" value="4" step="0.25" min="0.5"> × <input type="number" id="hIn" value="6" step="0.25" min="0.5"> in</span>
         </div>
         <span class="k">Rotate view</span>
         <div class="seg" id="rotate">
-          <button type="button" data-v="0" aria-pressed="true">0°</button>
-          <button type="button" data-v="90" aria-pressed="false">90°</button>
+          <button type="button" data-v="0" aria-pressed="false">0°</button>
+          <button type="button" data-v="90" aria-pressed="true">90°</button>
           <button type="button" data-v="180" aria-pressed="false">180°</button>
           <button type="button" data-v="270" aria-pressed="false">270°</button>
         </div>
@@ -402,6 +402,64 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
       } else out += data[i];
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- barcode record reordering
+  // QR / Data Matrix ^FD payloads made of "*/"-separated records are rewritten so the
+  // 1J, P, Q, V, 1T records appear in that order (only when each occurs exactly once).
+  const barcodePrefixOrder = ['1J', 'P', 'Q', 'V', '1T'];
+
+  function getBarcodeRecordPrefix(record) {
+    return ['1J', '1T', 'P', 'Q', 'V'].find((prefix) => record.startsWith(prefix));
+  }
+
+  function rearrangeBarcodeFieldData(data) {
+    const parts = data.split(/(\\?\*\/)/);
+    if (parts.length < 3) return data;
+
+    let trailer = '';
+    const trailerMatch = parts.at(-1).match(/(\\?\*<\\?\*[\r\n]*)$/);
+    if (trailerMatch) {
+      trailer = trailerMatch[1];
+      parts[parts.length - 1] = parts.at(-1).slice(0, -trailer.length);
+    }
+
+    const recordsByPrefix = new Map();
+    for (let index = 2; index < parts.length; index += 2) {
+      const prefix = getBarcodeRecordPrefix(parts[index]);
+      if (!prefix) continue;
+      if (recordsByPrefix.has(prefix)) return data;
+      recordsByPrefix.set(prefix, { index, record: parts[index] });
+    }
+
+    if (recordsByPrefix.size !== barcodePrefixOrder.length ||
+      !barcodePrefixOrder.every((prefix) => recordsByPrefix.has(prefix))) {
+      return data;
+    }
+
+    const targetIndexes = [...recordsByPrefix.values()]
+      .map(({ index }) => index)
+      .sort((left, right) => left - right);
+    barcodePrefixOrder.forEach((prefix, position) => {
+      parts[targetIndexes[position]] = recordsByPrefix.get(prefix).record;
+    });
+
+    parts[parts.length - 1] += trailer;
+    return parts.join('');
+  }
+
+  function rearrangeBarcodeFields(zpl) {
+    const barcodeCounts = { Q: 0, X: 0 };
+    return zpl.replace(/(\^B([QX])[^\^]*\^FD)(.*?)(\^FS)/gis, (_, command, barcodeCommand, data, end) => {
+      const barcodeKey = barcodeCommand.toUpperCase();
+      const barcodeType = barcodeKey === 'Q' ? 'QR Code' : 'Data Matrix';
+      barcodeCounts[barcodeKey] += 1;
+      const rearrangedData = rearrangeBarcodeFieldData(data);
+      if (rearrangedData !== data) {
+        console.log(`${barcodeType} ${barcodeCounts[barcodeKey]} new contents:`, rearrangedData);
+      }
+      return `${command}${rearrangedData}${end}`;
+    });
   }
 
   // ---------------------------------------------------------------- tokenizer
@@ -971,7 +1029,7 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
     const bwip = opts.bwipjs || (typeof bwipjs !== 'undefined' ? bwipjs : null);
     if (!bwip) throw new Error('bwip-js is not loaded');
     const make = opts.createCanvas || defaultCanvas;
-    const parsed = interpret(zpl);
+    const parsed = interpret(rearrangeBarcodeFields(zpl));
     const warnings = new Set(parsed.warnings);
     const s = Math.max(1, Math.round(opts.scale));
     const rot = ((Math.round((opts.rotate || 0) / 90) % 4) + 4) % 4;
@@ -1140,7 +1198,7 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
     return Uint8Array.from(out);
   }
 
-  return { render, toPDF, toPDFAsync, createPDF, countLabels, parse: interpret, _internal: { inflate, code128Codewords, decodeZebraHex, tokenize } };
+  return { render, toPDF, toPDFAsync, createPDF, countLabels, parse: interpret, _internal: { inflate, code128Codewords, decodeZebraHex, tokenize, rearrangeBarcodeFields } };
 });
 </script>
 <script>
@@ -1162,22 +1220,20 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
     get(k) { try { return localStorage.getItem('zplb.' + k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem('zplb.' + k, v); } catch (e) {} },
   };
+  // Rotate (90°), PDF quality (2×), printer (8 dpmm) and label size (^PW / ^LL) always start at their defaults.
   function seg(id, onChange) {
     const el = $(id);
-    const saved = store.get(id);
-    if (saved != null) el.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === saved)));
     el.addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      store.set(id, b.dataset.v); onChange();
+      onChange();
     });
     return () => +el.querySelector('[aria-pressed=true]').dataset.v;
   }
   const getRotate = seg('rotate', refreshPreviews);
   const getScale = seg('scale', () => {});
-  if (store.get('dpmm')) $('dpmm').value = store.get('dpmm');
   if (store.get('applyPO')) $('applyPO').checked = store.get('applyPO') === '1';
-  $('dpmm').addEventListener('change', () => { store.set('dpmm', $('dpmm').value); refreshPreviews(); });
+  $('dpmm').addEventListener('change', refreshPreviews);
   $('applyPO').addEventListener('change', () => { store.set('applyPO', $('applyPO').checked ? '1' : '0'); refreshPreviews(); });
   $('sizeMode').addEventListener('change', () => { $('customSize').hidden = $('sizeMode').value !== 'custom'; refreshPreviews(); });
   ['wIn', 'hIn'].forEach((id) => $(id).addEventListener('change', refreshPreviews));
@@ -1207,9 +1263,11 @@ FontLib.loadFont("OCR-B", 96, 100, "AAEAAAAPAIAAAwBwRkZUTXxHn14AADmUAAAAHEdERUYA
     return out;
   }
 
+  // Only one file at a time: a new file replaces the previous one and its previews.
   async function addFiles(list) {
-    const files = [...list];
+    const files = [...list].slice(0, 1);
     if (!files.length) return;
+    [...sources].forEach((s) => removeSource(s.id));
     for (const f of files) {
       const src = { id: nextId++, name: f.name, base: f.name.replace(/\.[^.]+$/, '') || 'labels', zpl: '', count: 0, state: 'reading', error: '', thumbs: [] };
       sources.push(src);
